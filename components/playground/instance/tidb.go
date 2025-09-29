@@ -29,12 +29,13 @@ type TiDBInstance struct {
 	shOpt SharedOptions
 	pds   []*PDInstance
 	Process
+	role           string
 	tiproxyCertDir string
 	enableBinlog   bool
 }
 
 // NewTiDBInstance return a TiDBInstance
-func NewTiDBInstance(shOpt SharedOptions, binPath string, dir, host, configPath string, id, port int, pds []*PDInstance, tiproxyCertDir string, enableBinlog bool) *TiDBInstance {
+func NewTiDBInstance(shOpt SharedOptions, binPath string, dir, host, configPath string, id, port int, pds []*PDInstance, tiproxyCertDir string, enableBinlog bool, role string) *TiDBInstance {
 	if port <= 0 {
 		port = 4000
 	}

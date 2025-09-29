@@ -38,6 +38,7 @@ import (
 // Components names
 const (
 	ComponentTiDB             = "tidb"
+	ComponentTiDBSystem       = "tidb-system"
 	ComponentTiKV             = "tikv"
 	ComponentTiKVWorker       = "tikv-worker"
 	ComponentPD               = "pd"
@@ -82,7 +83,7 @@ type Component interface {
 // UpdateConfig is used to control behavior pre/post hook of instances.
 type UpdateConfig struct {
 	CurrentVersion string
-	TargetVersion string
+	TargetVersion  string
 }
 
 // RollingUpdateInstance represent a instance need to transfer state when restart.

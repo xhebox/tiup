@@ -68,6 +68,7 @@ type Playground struct {
 	tikvs            []*instance.TiKVInstance
 	tikvWorkers      []*instance.TiKVWorkerInstance
 	tidbs            []*instance.TiDBInstance
+	tidb_systems     []*instance.TiDBInstance
 	tiflashs         []*instance.TiFlashInstance
 	tiproxys         []*instance.TiProxy
 	ticdcs           []*instance.TiCDC
@@ -326,6 +327,12 @@ func (p *Playground) handleScaleIn(w io.Writer, pid int) error {
 				p.tidbs = slices.Delete(p.tidbs, i, i+1)
 			}
 		}
+	case spec.ComponentTiDBSystem:
+		for i := 0; i < len(p.tidb_systems); i++ {
+			if p.tidb_systems[i].Pid() == pid {
+				p.tidb_systems = slices.Delete(p.tidb_systems, i, i+1)
+			}
+		}
 	case spec.ComponentCDC:
 		for i := 0; i < len(p.ticdcs); i++ {
 			if p.ticdcs[i].Pid() == pid {
@@ -486,6 +493,8 @@ func (p *Playground) sanitizeComponentConfig(cid string, cfg *instance.Config) e
 		return p.sanitizeConfig(p.bootOptions.TiKVWorker, cfg)
 	case spec.ComponentTiDB:
 		return p.sanitizeConfig(p.bootOptions.TiDB, cfg)
+	case spec.ComponentTiDBSystem:
+		return p.sanitizeConfig(p.bootOptions.TiDBSystem, cfg)
 	case spec.ComponentTiFlash:
 		return p.sanitizeConfig(p.bootOptions.TiFlash, cfg)
 	case spec.ComponentCDC:
@@ -710,6 +719,13 @@ func (p *Playground) WalkInstances(fn func(componentID string, ins instance.Inst
 		}
 	}
 
+	for _, ins := range p.tidb_systems {
+		err := fn(spec.ComponentTiDBSystem, ins)
+		if err != nil {
+			return err
+		}
+	}
+
 	for _, ins := range p.tidbs {
 		err := fn(spec.ComponentTiDB, ins)
 		if err != nil {
@@ -833,9 +849,13 @@ func (p *Playground) addInstance(componentID string, pdRole instance.PDRole, tif
 		ins = inst
 		p.schedulings = append(p.schedulings, inst)
 	case spec.ComponentTiDB:
-		inst := instance.NewTiDBInstance(p.bootOptions.ShOpt, cfg.BinPath, dir, host, cfg.ConfigPath, id, cfg.Port, p.pds, dataDir, p.enableBinlog())
+		inst := instance.NewTiDBInstance(p.bootOptions.ShOpt, cfg.BinPath, dir, host, cfg.ConfigPath, id, cfg.Port, p.pds, dataDir, p.enableBinlog(), "")
 		ins = inst
 		p.tidbs = append(p.tidbs, inst)
+	case spec.ComponentTiDBSystem:
+		inst := instance.NewTiDBInstance(p.bootOptions.ShOpt, cfg.BinPath, dir, host, cfg.ConfigPath, id, cfg.Port, p.pds, dataDir, p.enableBinlog(), "SYSTEM")
+		ins = inst
+		p.tidb_systems = append(p.tidb_systems, inst)
 	case spec.ComponentTiKV:
 		inst := instance.NewTiKVInstance(p.bootOptions.ShOpt, cfg.BinPath, dir, host, cfg.ConfigPath, id, cfg.Port, p.pds, p.tsos)
 		ins = inst
@@ -1087,16 +1107,8 @@ func (p *Playground) bootCluster(ctx context.Context, env *environment.Environme
 		return fmt.Errorf("all components count must be great than 0 (pd=%v)", options.PD.Num)
 	}
 
-	if options.ShOpt.Mode != "tidb-cse" {
-		if options.TiKVWorker.Num > 0 {
-			return fmt.Errorf("TiKV worker is only supported in tidb-cse mode")
-		}
-	}
-
-	if options.ShOpt.Mode == "tidb-cse" {
-		if options.TiKVWorker.Num > 1 {
-			return fmt.Errorf("TiKV worker only supports at most 1 instance")
-		}
+	if options.TiKVWorker.Num > 1 {
+		return fmt.Errorf("TiKV worker only supports at most 1 instance")
 	}
 
 	if !utils.Version(options.Version).IsNightly() {
@@ -1184,10 +1196,18 @@ func (p *Playground) bootCluster(ctx context.Context, env *environment.Environme
 		)
 	}
 
-	if options.ShOpt.Mode == "tidb-cse" {
+	switch options.ShOpt.Mode {
+	case "tidb-cse", "tidb-nextgen":
 		instances = append(
 			instances,
 			InstancePair{comp: spec.ComponentTiKVWorker, Config: options.TiKVWorker},
+		)
+	}
+
+	if options.ShOpt.Mode == "tidb-nextgen" {
+		instances = append(
+			instances,
+			InstancePair{comp: spec.ComponentTiDBSystem, Config: options.TiDBSystem},
 		)
 	}
 
