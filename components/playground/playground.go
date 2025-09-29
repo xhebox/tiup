@@ -22,6 +22,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"strconv"
@@ -62,20 +63,23 @@ type Playground struct {
 	bootOptions *BootOptions
 	port        int
 
-	pds              []*instance.PDInstance
-	tsos             []*instance.PDInstance
-	schedulings      []*instance.PDInstance
-	tikvs            []*instance.TiKVInstance
-	tikvWorkers      []*instance.TiKVWorkerInstance
-	tidbs            []*instance.TiDBInstance
-	tiflashs         []*instance.TiFlashInstance
-	tiproxys         []*instance.TiProxyInstance
-	ticdcs           []*instance.TiCDC
-	tikvCdcs         []*instance.TiKVCDCInstance
-	pumps            []*instance.Pump
-	drainers         []*instance.Drainer
-	dmMasters        []*instance.DMMaster
-	dmWorkers        []*instance.DMWorker
+	pds         []*instance.PDInstance
+	tsos        []*instance.PDInstance
+	schedulings []*instance.PDInstance
+	tikvs       []*instance.TiKVInstance
+	tikvWorkers []*instance.TiKVWorkerInstance
+	tidbs       []*instance.TiDBInstance
+	tiflashs    []*instance.TiFlashInstance
+	tiproxys    []*instance.TiProxyInstance
+	ticdcs      []*instance.TiCDC
+	tikvCdcs    []*instance.TiKVCDCInstance
+	pumps       []*instance.Pump
+	drainers    []*instance.Drainer
+	dmMasters   []*instance.DMMaster
+	dmWorkers   []*instance.DMWorker
+
+	instances []instance.Instance
+
 	startedInstances []instance.Instance
 
 	idAlloc        map[string]int
@@ -562,7 +566,7 @@ func (p *Playground) handleScaleOut(w io.Writer, cmd *Command) error {
 		return err
 	}
 	// TODO: Support scale-out in CSE mode
-	inst, err := p.addInstance(cmd.ComponentID, instance.PDRoleNormal, cmd.Config)
+	inst, err := p.addInstance(cmd.ComponentID, cmd.Config)
 	if err != nil {
 		return err
 	}
@@ -654,17 +658,8 @@ func (p *Playground) commandHandler(w http.ResponseWriter, r *http.Request) {
 
 // RWalkInstances work like WalkInstances, but in the reverse order.
 func (p *Playground) RWalkInstances(fn func(componentID string, ins instance.Instance) error) error {
-	var ids []string
-	var instances []instance.Instance
-
-	_ = p.WalkInstances(func(id string, ins instance.Instance) error {
-		ids = append(ids, id)
-		instances = append(instances, ins)
-		return nil
-	})
-
-	for i := len(ids); i > 0; i-- {
-		err := fn(ids[i-1], instances[i-1])
+	for i := len(p.instances) - 1; i >= 0; i-- {
+		err := fn(spec.ComponentPD, p.instances[i])
 		if err != nil {
 			return err
 		}
@@ -674,101 +669,12 @@ func (p *Playground) RWalkInstances(fn func(componentID string, ins instance.Ins
 
 // WalkInstances call fn for every instance and stop if return not nil.
 func (p *Playground) WalkInstances(fn func(componentID string, ins instance.Instance) error) error {
-	for _, ins := range p.pds {
+	for _, ins := range p.instances {
 		err := fn(spec.ComponentPD, ins)
 		if err != nil {
 			return err
 		}
 	}
-	for _, ins := range p.tsos {
-		err := fn(spec.ComponentTSO, ins)
-		if err != nil {
-			return err
-		}
-	}
-	for _, ins := range p.schedulings {
-		err := fn(spec.ComponentScheduling, ins)
-		if err != nil {
-			return err
-		}
-	}
-
-	for _, ins := range p.tikvs {
-		err := fn(spec.ComponentTiKV, ins)
-		if err != nil {
-			return err
-		}
-	}
-	for _, ins := range p.tikvWorkers {
-		err := fn(spec.ComponentTiKVWorker, ins)
-		if err != nil {
-			return err
-		}
-	}
-
-	for _, ins := range p.pumps {
-		err := fn(spec.ComponentPump, ins)
-		if err != nil {
-			return err
-		}
-	}
-
-	for _, ins := range p.tidbs {
-		err := fn(spec.ComponentTiDB, ins)
-		if err != nil {
-			return err
-		}
-	}
-
-	for _, ins := range p.tiproxys {
-		err := fn(spec.ComponentTiProxy, ins)
-		if err != nil {
-			return err
-		}
-	}
-
-	for _, ins := range p.ticdcs {
-		err := fn(spec.ComponentCDC, ins)
-		if err != nil {
-			return err
-		}
-	}
-
-	for _, ins := range p.tikvCdcs {
-		err := fn(spec.ComponentTiKVCDC, ins)
-		if err != nil {
-			return err
-		}
-	}
-
-	for _, ins := range p.drainers {
-		err := fn(spec.ComponentDrainer, ins)
-		if err != nil {
-			return err
-		}
-	}
-
-	for _, ins := range p.tiflashs {
-		err := fn(spec.ComponentTiFlash, ins)
-		if err != nil {
-			return err
-		}
-	}
-
-	for _, ins := range p.dmMasters {
-		err := fn(spec.ComponentDMMaster, ins)
-		if err != nil {
-			return err
-		}
-	}
-
-	for _, ins := range p.dmWorkers {
-		err := fn(spec.ComponentDMWorker, ins)
-		if err != nil {
-			return err
-		}
-	}
-
 	return nil
 }
 
@@ -776,7 +682,7 @@ func (p *Playground) enableBinlog() bool {
 	return p.bootOptions.Pump.Num > 0
 }
 
-func (p *Playground) addInstance(componentID string, role string, cfg instance.Config) (ins instance.Instance, err error) {
+func (p *Playground) addInstance(role string, cfg instance.Config) (ins instance.Instance, err error) {
 	if cfg.BinPath != "" {
 		cfg.BinPath, err = getAbsolutePath(cfg.BinPath)
 		if err != nil {
@@ -793,12 +699,8 @@ func (p *Playground) addInstance(componentID string, role string, cfg instance.C
 
 	dataDir := p.dataDir
 
-	id := p.allocID(componentID)
-	dir := filepath.Join(dataDir, fmt.Sprintf("%s-%d", componentID, id))
-	if componentID == instance.PDRoleNormal && (role != instance.PDRoleNormal && role != instance.PDRoleAPI) {
-		id = p.allocID(role)
-		dir = filepath.Join(dataDir, fmt.Sprintf("%s-%d", role, id))
-	}
+	id := p.allocID(role)
+	dir := filepath.Join(dataDir, fmt.Sprintf("%s-%d", role, id))
 	if err = utils.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
@@ -808,7 +710,7 @@ func (p *Playground) addInstance(componentID string, role string, cfg instance.C
 		host = cfg.Host
 	}
 
-	switch componentID {
+	switch role {
 	case spec.ComponentPD:
 		inst := instance.NewPDInstance(role, p.bootOptions.ShOpt, cfg.BinPath, dir, host, cfg.ConfigPath, id, p.pds, cfg.Port, p.bootOptions.TiKV.Num == 1)
 		ins = inst
@@ -886,7 +788,7 @@ func (p *Playground) addInstance(componentID string, role string, cfg instance.C
 		ins = inst
 		p.dmWorkers = append(p.dmWorkers, inst)
 	default:
-		return nil, errors.Errorf("unknown component: %s", componentID)
+		return nil, errors.Errorf("unknown component: %s", role)
 	}
 
 	return
@@ -1059,28 +961,19 @@ func (p *Playground) bindVersion(comp string, version string) (bindVersion strin
 //revive:disable:cognitive-complexity
 //revive:disable:error-strings
 func (p *Playground) bootCluster(ctx context.Context, env *environment.Environment, options *BootOptions) error {
-	for _, cfg := range []*instance.Config{
-		&options.PD,
-		&options.TSO,
-		&options.Scheduling,
-		&options.TiProxy,
-		&options.TiDB,
-		&options.TiKV,
-		&options.TiKVWorker,
-		&options.TiFlash,
-		&options.TiFlashCompute,
-		&options.TiFlashWrite,
-		&options.Pump,
-		&options.Drainer,
-		&options.TiKVCDC,
-		&options.DMMaster,
-		&options.DMWorker,
-	} {
-		path, err := getAbsolutePath(cfg.ConfigPath)
-		if err != nil {
-			return errors.Annotatef(err, "cannot eval absolute directory: %s", cfg.ConfigPath)
+	ropts := reflect.ValueOf(options).Elem()
+	configType := reflect.TypeOf((*instance.Config)(nil))
+	for i := 0; i < ropts.NumField(); i++ {
+		fld := ropts.Field(i)
+		if fld.Type() == configType {
+			cp := fld.FieldByName("ConfigPath")
+			path, err := getAbsolutePath(cp.String())
+			if err != nil {
+				return errors.Annotatef(err, "cannot eval absolute directory: %s", cp.String())
+			}
+			fmt.Printf("%s, %s\n", cp.String(), path)
+			cp.Set(reflect.ValueOf(path))
 		}
-		cfg.ConfigPath = path
 	}
 
 	p.bootOptions = options
@@ -1114,39 +1007,32 @@ func (p *Playground) bootCluster(ctx context.Context, env *environment.Environme
 	}
 
 	type InstancePair struct {
-		comp string
 		role string
 		instance.Config
 	}
+	var instances []InstancePair
 
-	instances := []InstancePair{
-		{spec.ComponentTiProxy, "", options.TiProxy},
-		{spec.ComponentTiKV, "", options.TiKV},
-		{spec.ComponentPump, "", options.Pump},
-		{spec.ComponentTiDB, "", options.TiDB},
-		{spec.ComponentCDC, "", options.TiCDC},
-		{spec.ComponentTiKVCDC, "", options.TiKVCDC},
-		{spec.ComponentDrainer, "", options.Drainer},
-		{spec.ComponentDMMaster, "", options.DMMaster},
-		{spec.ComponentDMWorker, "", options.DMWorker},
-	}
-
-	if options.ShOpt.Mode == "tidb-nextgen" {
-		instances = append(instances,
-			InstancePair{spec.ComponentTiKVWorker, "", options.TiKVWorker},
-		)
-	}
-
-	if options.ShOpt.Mode == "tidb" {
-		instances = append(instances,
-			InstancePair{spec.ComponentTiFlash, instance.TiFlashRoleNormal, options.TiFlash},
-		)
-	} else if options.ShOpt.Mode == "tidb-cse" || options.ShOpt.Mode == "tiflash-disagg" {
-		if !tidbver.TiFlashPlaygroundNewStartMode(options.Version) {
-			// For simplicity, currently we only implemented disagg mode when TiFlash can run without config.
-			return fmt.Errorf("TiUP playground only supports CSE/Disagg mode for TiDB cluster >= v7.1.0 (or nightly)")
+	if options.ShOpt.PDMode == "pd" {
+		instances = append(instances, InstancePair{spec.ComponentPD, options.PD})
+	} else if options.ShOpt.PDMode == "ms" {
+		if !tidbver.PDSupportMicroservices(options.Version) {
+			return fmt.Errorf("PD cluster doesn't support microservices mode in version %s", options.Version)
 		}
+		instances = append(instances,
+			[]InstancePair{
+				{spec.ComponentPD, options.PD},
+				{spec.ComponentTSO, options.TSO},
+				{spec.ComponentScheduling, options.Scheduling},
+			}...,
+		)
+	}
 
+	// add tikv
+	instances = append(instances, InstancePair{spec.ComponentTiKV, options.TiKV})
+
+	// these modes need s3 api
+	switch options.ShOpt.Mode {
+	case "tidb-nextgen", "tidb-cse", "tiflash-disagg":
 		if !strings.HasPrefix(options.ShOpt.CSE.S3Endpoint, "https://") && !strings.HasPrefix(options.ShOpt.CSE.S3Endpoint, "http://") {
 			return fmt.Errorf("CSE/Disagg mode requires S3 endpoint to start with http:// or https://")
 		}
@@ -1184,40 +1070,56 @@ func (p *Playground) bootCluster(ctx context.Context, env *environment.Environme
 				return fmt.Errorf("CSE/Disagg mode preflight check failed: Bucket %s doesn't exist and fail to create automatically (your bucket name may be invalid?)", options.ShOpt.CSE.Bucket)
 			}
 		}
-
-		instances = append(
-			instances,
-			InstancePair{spec.ComponentTiFlash, instance.TiFlashRoleDisaggWrite, options.TiFlashWrite},
-			InstancePair{spec.ComponentTiFlash, instance.TiFlashRoleDisaggCompute, options.TiFlashCompute},
-		)
 	}
 
-	if options.ShOpt.Mode == "tidb-cse" {
+	// add tikv-worker
+	switch options.ShOpt.Mode {
+	case "tidb-nextgen", "tidb-cse":
 		instances = append(
 			instances,
 			InstancePair{comp: spec.ComponentTiKVWorker, Config: options.TiKVWorker},
+			InstancePair{comp: spec.ComponentTiDB, Config: options.TiDB},
 		)
 	}
 
-	if options.ShOpt.PDMode == "pd" {
-		instances = append([]InstancePair{{spec.ComponentPD, instance.PDRoleNormal, options.PD}},
-			instances...,
+	// add comp
+	instances = append(instances, []InstancePair{
+		{spec.ComponentPump, options.Pump},
+		{spec.ComponentTiDB, options.TiDB},
+		{spec.ComponentTiProxy, options.TiProxy},
+		{spec.ComponentCDC, options.TiCDC},
+		{spec.ComponentTiKVCDC, options.TiKVCDC},
+		{spec.ComponentDrainer, options.Drainer},
+	}...)
+
+	// add tiflash
+	switch options.ShOpt.Mode {
+	case "tidb":
+		instances = append(instances,
+			InstancePair{instance.TiFlashRoleNormal, options.TiFlash},
 		)
-	} else if options.ShOpt.PDMode == "ms" {
-		if !tidbver.PDSupportMicroservices(options.Version) {
-			return fmt.Errorf("PD cluster doesn't support microservices mode in version %s", options.Version)
+	case "tiflash-disagg", "tidb-cse":
+		if !tidbver.TiFlashPlaygroundNewStartMode(options.Version) {
+			// For simplicity, currently we only implemented disagg mode when TiFlash can run without config.
+			return fmt.Errorf("TiUP playground only supports CSE/Disagg mode for TiDB cluster >= v7.1.0 (or nightly)")
 		}
-		instances = append([]InstancePair{
-			{spec.ComponentPD, instance.PDRoleAPI, options.PD},
-			{spec.ComponentPD, instance.PDRoleTSO, options.TSO},
-			{spec.ComponentPD, instance.PDRoleScheduling, options.Scheduling}},
-			instances...,
+
+		instances = append(
+			instances,
+			InstancePair{instance.TiFlashRoleDisaggWrite, options.TiFlashWrite},
+			InstancePair{instance.TiFlashRoleDisaggCompute, options.TiFlashCompute},
 		)
 	}
+
+	// add comp
+	instances = append(instances, []InstancePair{
+		{spec.ComponentDMMaster, options.DMMaster},
+		{spec.ComponentDMWorker, options.DMWorker},
+	}...)
 
 	for _, inst := range instances {
 		for i := 0; i < inst.Num; i++ {
-			_, err := p.addInstance(inst.comp, inst.role, inst.Config)
+			_, err := p.addInstance(inst.role, inst.Config)
 			if err != nil {
 				return err
 			}
@@ -1450,80 +1352,14 @@ func (p *Playground) terminate(sig syscall.Signal) {
 	if p.grafana != nil && p.grafana.cmd != nil && p.grafana.cmd.Process != nil {
 		go kill("grafana", p.grafana.cmd.Process.Pid, p.grafana.wait)
 	}
-	for _, inst := range p.tikvWorkers {
-		if inst.Process() != nil && inst.Process().Cmd() != nil && inst.Process().Cmd().Process != nil {
-			kill(inst.Name(), inst.Process().Pid(), inst.Wait)
-		}
-	}
 
-	for _, inst := range p.dmWorkers {
+	// NOTE: err must be nil
+	_ = p.RWalkInstances(func(_componentID string, inst instance.Instance) error {
 		if inst.Process() != nil && inst.Process().Cmd() != nil && inst.Process().Cmd().Process != nil {
 			kill(inst.Name(), inst.Process().Pid(), inst.Wait)
 		}
-	}
-
-	for _, inst := range p.dmMasters {
-		if inst.Process() != nil && inst.Process().Cmd() != nil && inst.Process().Cmd().Process != nil {
-			kill(inst.Name(), inst.Process().Pid(), inst.Wait)
-		}
-	}
-
-	for _, inst := range p.tiflashs {
-		if inst.Process() != nil && inst.Process().Cmd() != nil && inst.Process().Cmd().Process != nil {
-			kill(inst.Name(), inst.Process().Pid(), inst.Wait)
-		}
-	}
-	for _, inst := range p.ticdcs {
-		if inst.Process() != nil && inst.Process().Cmd() != nil && inst.Process().Cmd().Process != nil {
-			kill(inst.Name(), inst.Process().Pid(), inst.Wait)
-		}
-	}
-	for _, inst := range p.tikvCdcs {
-		if inst.Process() != nil && inst.Process().Cmd() != nil && inst.Process().Cmd().Process != nil {
-			kill(inst.Name(), inst.Process().Pid(), inst.Wait)
-		}
-	}
-	for _, inst := range p.drainers {
-		if inst.Process() != nil && inst.Process().Cmd() != nil && inst.Process().Cmd().Process != nil {
-			kill(inst.Name(), inst.Process().Pid(), inst.Wait)
-		}
-	}
-	// tidb must exit earlier then pd
-	for _, inst := range p.tidbs {
-		if inst.Process() != nil && inst.Process().Cmd() != nil && inst.Process().Cmd().Process != nil {
-			kill(inst.Name(), inst.Process().Pid(), inst.Wait)
-		}
-	}
-	for _, inst := range p.pumps {
-		if inst.Process() != nil && inst.Process().Cmd() != nil && inst.Process().Cmd().Process != nil {
-			kill(inst.Name(), inst.Process().Pid(), inst.Wait)
-		}
-	}
-	for _, inst := range p.tikvs {
-		if inst.Process() != nil && inst.Process().Cmd() != nil && inst.Process().Cmd().Process != nil {
-			kill(inst.Name(), inst.Process().Pid(), inst.Wait)
-		}
-	}
-	for _, inst := range p.pds {
-		if inst.Process() != nil && inst.Process().Cmd() != nil && inst.Process().Cmd().Process != nil {
-			kill(inst.Name(), inst.Process().Pid(), inst.Wait)
-		}
-	}
-	for _, inst := range p.tsos {
-		if inst.Process() != nil && inst.Process().Cmd() != nil && inst.Process().Cmd().Process != nil {
-			kill(inst.Name(), inst.Process().Pid(), inst.Wait)
-		}
-	}
-	for _, inst := range p.schedulings {
-		if inst.Process() != nil && inst.Process().Cmd() != nil && inst.Process().Cmd().Process != nil {
-			kill(inst.Name(), inst.Process().Pid(), inst.Wait)
-		}
-	}
-	for _, inst := range p.tiproxys {
-		if inst.Process() != nil && inst.Process().Cmd() != nil && inst.Process().Cmd().Process != nil {
-			kill(inst.Name(), inst.Process().Pid(), inst.Wait)
-		}
-	}
+		return nil
+	})
 }
 
 func (p *Playground) renderSDFile() error {

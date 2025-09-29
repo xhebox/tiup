@@ -20,22 +20,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tiup/pkg/cluster/spec"
 	"github.com/pingcap/tiup/pkg/tidbver"
 	"github.com/pingcap/tiup/pkg/utils"
-)
-
-// PDRole is the role of PD.
-type PDRole = string
-
-const (
-	// PDRoleNormal is the default role of PD
-	PDRoleNormal PDRole = "pd"
-	// PDRoleAPI is the role of PD API
-	PDRoleAPI PDRole = "api"
-	// PDRoleTSO is the role of PD TSO
-	PDRoleTSO PDRole = "tso"
-	// PDRoleScheduling is the role of PD scheduling
-	PDRoleScheduling PDRole = "scheduling"
 )
 
 // PDInstance represent a running pd-server
@@ -51,7 +38,7 @@ type PDInstance struct {
 var _ Instance = &PDInstance{}
 
 // NewPDInstance return a PDInstance
-func NewPDInstance(role PDRole, shOpt SharedOptions, binPath, dir, host, configPath string, id int, pds []*PDInstance, port int, kvIsSingleReplica bool) *PDInstance {
+func NewPDInstance(role string, shOpt SharedOptions, binPath, dir, host, configPath string, id int, pds []*PDInstance, port int, kvIsSingleReplica bool) *PDInstance {
 	if port <= 0 {
 		port = 2379
 	}
@@ -84,18 +71,6 @@ func (inst *PDInstance) InitCluster(pds []*PDInstance) *PDInstance {
 	return inst
 }
 
-// Name return the name of pd.
-func (inst *PDInstance) Name() string {
-	switch inst.Role {
-	case PDRoleTSO:
-		return fmt.Sprintf("tso-%d", inst.ID)
-	case PDRoleScheduling:
-		return fmt.Sprintf("scheduling-%d", inst.ID)
-	default:
-		return fmt.Sprintf("pd-%d", inst.ID)
-	}
-}
-
 // Start calls set inst.cmd and Start
 func (inst *PDInstance) Start(ctx context.Context) error {
 	configPath := filepath.Join(inst.Dir, "pd.toml")
@@ -110,8 +85,9 @@ func (inst *PDInstance) Start(ctx context.Context) error {
 	uid := inst.Name()
 	var args []string
 	switch inst.Role {
-	case PDRoleNormal, PDRoleAPI:
-		if inst.Role == PDRoleAPI {
+	case spec.ComponentPD:
+		// NOTE: when it is ms, we start as services
+		if inst.shOpt.PDMode == "ms" {
 			args = []string{"services", "api"}
 		}
 		args = append(args, []string{
@@ -141,7 +117,7 @@ func (inst *PDInstance) Start(ctx context.Context) error {
 		default:
 			return errors.Errorf("must set the init or join instances")
 		}
-	case PDRoleTSO:
+	case spec.ComponentTSO:
 		endpoints := pdEndpoints(inst.pds, true)
 		args = []string{
 			"services",
@@ -155,7 +131,7 @@ func (inst *PDInstance) Start(ctx context.Context) error {
 		if tidbver.PDSupportMicroservicesWithName(inst.Version.String()) {
 			args = append(args, fmt.Sprintf("--name=%s", uid))
 		}
-	case PDRoleScheduling:
+	case spec.ComponentScheduling:
 		endpoints := pdEndpoints(inst.pds, true)
 		args = []string{
 			"services",
@@ -176,14 +152,11 @@ func (inst *PDInstance) Start(ctx context.Context) error {
 
 // Component return the component name.
 func (inst *PDInstance) Component() string {
-	return PDRoleNormal
+	return spec.ComponentPD
 }
 
 // LogFile return the log file.
 func (inst *PDInstance) LogFile() string {
-	if inst.Role == PDRoleNormal || inst.Role == PDRoleAPI {
-		return filepath.Join(inst.Dir, "pd.log")
-	}
 	return filepath.Join(inst.Dir, fmt.Sprintf("%s.log", inst.Role))
 }
 

@@ -129,6 +129,7 @@ func (p *Profile) saveTo(path string, data []byte, perm os.FileMode) error {
 
 // WriteMetaFile writes process meta to instance/MetaFilename.
 func (p *Profile) WriteMetaFile(instance string, data *Process) error {
+	fmt.Printf("%s,%s", DataParentDir, instance)
 	metaFile := filepath.Join(DataParentDir, instance, MetaFilename)
 	jsonData, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {

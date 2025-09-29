@@ -32,7 +32,6 @@ jobs:
   dm:
     runs-on: ubuntu-latest
     strategy:
-      fail-fast: true
       matrix:
         cases:
           - '--do-cases test_cmd'

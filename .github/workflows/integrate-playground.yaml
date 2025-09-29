@@ -35,7 +35,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
-      fail-fast: true
       matrix:
         cases:
           - "test_playground"
