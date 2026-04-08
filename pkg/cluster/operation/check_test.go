@@ -98,9 +98,15 @@ func TestCheckOSInfo(t *testing.T) {
 			isWarn:  false,
 		},
 		{
-			name:    "RHEL 9 (Not Supported in current logic)",
+			name:    "RHEL 9 (Supported)",
 			osInfo:  sysinfo.OS{Vendor: "rhel", Name: "Red Hat Enterprise Linux", Version: "9"},
-			wantErr: true,
+			wantErr: false,
+			isWarn:  false,
+		},
+		{
+			name:    "RHEL 9 (Supported)",
+			osInfo:  sysinfo.OS{Vendor: "rhel", Name: "Red Hat Enterprise Linux", Version: "9.7"},
+			wantErr: false,
 			isWarn:  false,
 		},
 
