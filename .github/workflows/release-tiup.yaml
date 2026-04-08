@@ -41,14 +41,11 @@ jobs:
         arch:
           - "amd64"
           - "arm64"
-    env:
-      working-directory: ${{ github.workspace }}/go/src/github.com/${{ github.repository }}
     steps:
       - name: Check out code into the Go module directory
         uses: actions/checkout@v6
         with:
           ref: ${{ github.event.inputs.git-ref || github.event.pull_request.head.sha }}
-          path: go/src/github.com/${{ github.repository }}
           fetch-depth: 0
 
       - name: Set up Go
@@ -59,7 +56,6 @@ jobs:
 
       - name: Check if this is a staging build
         id: check_staging
-        working-directory: ${{ env.working-directory }}
         if: github.event_name != 'release'
         run: |
           BRANCH_NAME=$(git rev-parse --abbrev-ref HEAD)
@@ -72,7 +68,6 @@ jobs:
 
       - name: Get git ref and commit
         id: get_git
-        working-directory: ${{ env.working-directory }}
         # when empty, it will be determined by Makefile
         run: |
           if [[ $GITHUB_REF == refs/tags/* ]]; then
@@ -85,7 +80,6 @@ jobs:
 
       - name: Build for ${{ matrix.os }}-${{ matrix.arch }}
         id: build_tiup
-        working-directory: ${{ env.working-directory }}
         env:
           GOOS: ${{ matrix.os }}
           GOARCH: ${{ matrix.arch }}
@@ -120,7 +114,6 @@ jobs:
 
       - name: Package components
         id: packaging
-        working-directory: ${{ env.working-directory }}
         env:
           ARCH: ${{ matrix.os }}-${{ matrix.arch }}
           REL_VER: ${{ steps.build_tiup.outputs.REL_VER }}
@@ -155,7 +148,6 @@ jobs:
           ${TAR} -C bin -czf package/server-${REL_VER}-${ARCH}.tar.gz tiup-server
 
       - name: Publish packages
-        working-directory: ${{ env.working-directory }}
         env:
           TIUP_MIRRORS: ${{ github.event.inputs.staging-mirror == 'true' && secrets.TIUP_SERVER_STAGING || secrets.TIUP_SERVER_PROD }}
           TIUP_HOME: ${{ steps.packaging.outputs.TIUP_HOME }}
@@ -189,7 +181,7 @@ jobs:
         if: github.event_name == 'release'
         with:
           allowUpdates: true
-          artifacts: ${{ env.working-directory }}/tiup-${{ steps.build_tiup.outputs.REL_VER }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
+          artifacts: tiup-${{ steps.build_tiup.outputs.REL_VER }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
           artifactContentType: application/gzip
           omitBodyDuringUpdate: true
           omitNameDuringUpdate: true
