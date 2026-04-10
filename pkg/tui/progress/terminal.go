@@ -22,11 +22,13 @@ import (
 
 	"go.uber.org/atomic"
 	"golang.org/x/sys/unix"
+	"golang.org/x/term"
 )
 
 var (
 	termSizeWidth  = atomic.Int32{}
 	termSizeHeight = atomic.Int32{}
+	isTTY          = atomic.Bool{}
 )
 
 func updateTerminalSize() error {
@@ -40,22 +42,38 @@ func updateTerminalSize() error {
 }
 
 func moveCursorUp(w io.Writer, n int) {
+	if !isTTY.Load() {
+		return
+	}
 	_, _ = fmt.Fprintf(w, "\033[%dA", n)
 }
 
 func moveCursorDown(w io.Writer, n int) {
+	if !isTTY.Load() {
+		return
+	}
 	_, _ = fmt.Fprintf(w, "\033[%dB", n)
 }
 
 func moveCursorToLineStart(w io.Writer) {
+	if !isTTY.Load() {
+		_, _ = fmt.Fprintf(w, "\n")
+		return
+	}
 	_, _ = fmt.Fprintf(w, "\r")
 }
 
 func clearLine(w io.Writer) {
+	if !isTTY.Load() {
+		return
+	}
 	_, _ = fmt.Fprintf(w, "\033[2K")
 }
 
 func init() {
+	// Check if stdout is a TTY
+	isTTY.Store(term.IsTerminal(int(os.Stdout.Fd())))
+
 	_ = updateTerminalSize()
 
 	sigCh := make(chan os.Signal, 1)

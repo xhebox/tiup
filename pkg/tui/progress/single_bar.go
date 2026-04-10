@@ -54,7 +54,13 @@ func (b *singleBarCore) renderDoneOrError(w io.Writer, dp *DisplayProps) {
 	if len(dp.Detail) > 0 {
 		detail = ": " + dp.Detail
 	}
-	_, _ = fmt.Fprintf(w, "%s ... %s%s", displayPrefix, tailColor.Sprint(tail), detail)
+
+	// Disable color if not a TTY
+	if isTTY.Load() {
+		_, _ = fmt.Fprintf(w, "%s ... %s%s", displayPrefix, tailColor.Sprint(tail), detail)
+	} else {
+		_, _ = fmt.Fprintf(w, "%s ... %s%s", displayPrefix, tail, detail)
+	}
 }
 
 func (b *singleBarCore) renderSpinner(w io.Writer, dp *DisplayProps) {
@@ -76,12 +82,17 @@ func (b *singleBarCore) renderSpinner(w io.Writer, dp *DisplayProps) {
 		displayPrefix = runewidth.Truncate(dp.Prefix, width-midWidth, "")
 		displaySuffix = ""
 	}
-	_, _ = fmt.Fprintf(w, "%s ... %s %s",
-		displayPrefix,
-		colorSpinner.Sprintf("%c", spinnerText[b.spinnerFrame]),
-		displaySuffix)
 
-	b.spinnerFrame = (b.spinnerFrame + 1) % len(spinnerText)
+	// Disable color and spinner animation if not a TTY
+	if isTTY.Load() {
+		_, _ = fmt.Fprintf(w, "%s ... %s %s",
+			displayPrefix,
+			colorSpinner.Sprintf("%c", spinnerText[b.spinnerFrame]),
+			displaySuffix)
+		b.spinnerFrame = (b.spinnerFrame + 1) % len(spinnerText)
+	} else {
+		_, _ = fmt.Fprintf(w, "%s ... %s", displayPrefix, displaySuffix)
+	}
 }
 
 func (b *singleBarCore) renderTo(w io.Writer) {
@@ -141,8 +152,10 @@ func (b *SingleBar) StopRenderLoop() {
 }
 
 func (b *SingleBar) preRender() {
-	// Preserve space for the bar
-	fmt.Println("")
+	// Preserve space for the bar only if TTY
+	if isTTY.Load() {
+		fmt.Println("")
+	}
 }
 
 func (b *SingleBar) render() {
