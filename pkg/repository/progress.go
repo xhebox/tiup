@@ -15,8 +15,10 @@ package repository
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/cheggaaa/pb/v3"
+	"golang.org/x/term"
 )
 
 // DisableProgress implement the DownloadProgress interface and disable download progress
@@ -42,7 +44,17 @@ func (p *ProgressBar) Start(url string, size int64) {
 	p.size = size
 	p.bar = pb.Start64(size)
 	p.bar.Set(pb.Bytes, true)
-	p.bar.SetTemplateString(fmt.Sprintf(`download %s {{counters . }} {{percent . }} {{speed . "%%s/s" "? MiB/s"}}`, url))
+
+	// Check if stdout is a TTY
+	isTTY := term.IsTerminal(int(os.Stdout.Fd()))
+
+	// Use a simple template without ANSI escape sequences when stdout is not a TTY
+	if isTTY {
+		p.bar.SetTemplateString(fmt.Sprintf(`download %s {{counters . }} {{percent . }} {{speed . "%%s/s" "? MiB/s"}}`, url))
+	} else {
+		// Simple template for non-TTY output (no progress bar, just text)
+		p.bar.SetTemplateString(fmt.Sprintf(`download %s {{counters . }}`, url))
+	}
 }
 
 // SetCurrent implement the DownloadProgress interface

@@ -76,13 +76,26 @@ func (b *MultiBar) StopRenderLoop() {
 }
 
 func (b *MultiBar) preRender() {
-	// Preserve space for the bar
-	fmt.Print(strings.Repeat("\n", len(b.bars)+1))
+	// Preserve space for the bar only if TTY
+	if isTTY.Load() {
+		fmt.Print(strings.Repeat("\n", len(b.bars)+1))
+	}
 }
 
 func (b *MultiBar) render() {
 	f := bufio.NewWriter(os.Stdout)
 
+	// Non-TTY mode: simple line-by-line output
+	if !isTTY.Load() {
+		for _, bar := range b.bars {
+			bar.core.renderTo(f)
+			_, _ = fmt.Fprintln(f)
+		}
+		_ = f.Flush()
+		return
+	}
+
+	// TTY mode: use cursor movements for dynamic updates
 	y := int(termSizeHeight.Load()) - 1
 	movedY := 0
 	for i := len(b.bars) - 1; i >= 0; i-- {
